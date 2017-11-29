@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -15,7 +17,41 @@ var Values = make(map[string][]string)
 var count = 0
 var logFileNumber = 0
 
-var lock sync.Mutex
+var mapLock sync.Mutex
+var fileLock sync.Mutex
+
+var cont = true
+
+type TCPReader struct {
+	data   []rune
+	cursor int
+}
+
+type TCPReadNext interface {
+	Next() ([]rune, error)
+}
+
+func (reader *TCPReader) Next() ([]rune, error) {
+	startingCursor := reader.cursor
+	next := reader.data[reader.cursor]
+
+	for next != '\n' {
+		reader.cursor++
+
+		if reader.cursor >= len(reader.data) {
+			return nil, errors.New("Malformed data")
+		}
+	}
+
+	return reader.data[startingCursor:reader.cursor], nil
+}
+
+func NewTCPReader(data []byte) *TCPReader {
+	reader := new(TCPReader)
+	reader.cursor = 0
+	reader.data = bytes.Runes(data)
+	return reader
+}
 
 func handleConnection(logFile *os.File, connection net.Conn) {
 	defer connection.Close()
@@ -23,7 +59,7 @@ func handleConnection(logFile *os.File, connection net.Conn) {
 	data := make([]byte, 0, 4096)
 	temp := make([]byte, 256)
 
-	for {
+	for cont {
 		length, err := connection.Read(temp)
 
 		data = append(data, temp[:length]...)
@@ -33,26 +69,32 @@ func handleConnection(logFile *os.File, connection net.Conn) {
 
 		split := strings.Split(string(data), "\n")
 		for _, value := range split {
-			lock.Lock()
+			mapLock.Lock()
 			length = len(Values[value])
-			lock.Unlock()
 			if length == 0 {
 				if value == "" {
+					mapLock.Unlock()
 					continue
+				}
+
+				if value == "shutdown" {
+					fmt.Println("**** SHUTDOWN ****")
+					cont = false
 				}
 
 				count++
 
+				fileLock.Lock()
 				_, err := logFile.WriteString(value + "\n")
+				fileLock.Unlock()
 
 				if err != nil {
 					panic(err)
 				}
 			}
 
-			lock.Lock()
 			Values[value] = append(Values[value], value)
-			lock.Unlock()
+			mapLock.Unlock()
 		}
 	}
 }
@@ -62,9 +104,9 @@ func printLoop() {
 
 	for {
 		time.Sleep(5 * time.Second)
-		lock.Lock()
+		mapLock.Lock()
 		temp := len(Values)
-		lock.Unlock()
+		mapLock.Unlock()
 		periodUniqueEntries := temp - uniqueEntries
 		uniqueEntries = temp
 
@@ -125,7 +167,7 @@ func main() {
 
 	defer logFile.Close()
 
-	for {
+	for cont {
 		connection, err := server.Accept()
 		if err != nil {
 			panic(err)
