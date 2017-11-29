@@ -18,7 +18,7 @@ var mapLock sync.Mutex
 var fileLock sync.Mutex
 var listenLock sync.Mutex
 
-func handleConnection(logFile *os.File, connection net.Conn) {
+func handleConnection(connection net.Conn) {
 	defer connection.Close()
 
 	data := make([]byte, 0, 4096)
@@ -137,7 +137,7 @@ func waitForConnection(wg *sync.WaitGroup, server net.Listener) {
 			panic(err)
 		}
 
-		handleConnection(logFile, connection)
+		handleConnection(connection)
 	}
 }
 
