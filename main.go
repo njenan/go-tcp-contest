@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -19,39 +16,7 @@ var logFileNumber = 0
 
 var mapLock sync.Mutex
 var fileLock sync.Mutex
-
-var cont = true
-
-type TCPReader struct {
-	data   []rune
-	cursor int
-}
-
-type TCPReadNext interface {
-	Next() ([]rune, error)
-}
-
-func (reader *TCPReader) Next() ([]rune, error) {
-	startingCursor := reader.cursor
-	next := reader.data[reader.cursor]
-
-	for next != '\n' {
-		reader.cursor++
-
-		if reader.cursor >= len(reader.data) {
-			return nil, errors.New("Malformed data")
-		}
-	}
-
-	return reader.data[startingCursor:reader.cursor], nil
-}
-
-func NewTCPReader(data []byte) *TCPReader {
-	reader := new(TCPReader)
-	reader.cursor = 0
-	reader.data = bytes.Runes(data)
-	return reader
-}
+var listenLock sync.Mutex
 
 func handleConnection(logFile *os.File, connection net.Conn) {
 	defer connection.Close()
@@ -59,33 +24,53 @@ func handleConnection(logFile *os.File, connection net.Conn) {
 	data := make([]byte, 0, 4096)
 	temp := make([]byte, 256)
 
-	for cont {
+	cursor := 0
+
+	for {
 		length, err := connection.Read(temp)
 
-		data = append(data, temp[:length]...)
 		if err != nil {
 			break
 		}
 
-		split := strings.Split(string(data), "\n")
-		for _, value := range split {
+		data = append(data, temp[:length]...)
+
+	Loop:
+		for {
+			nextCursor := cursor + 1
+
+			if nextCursor >= len(data) {
+				break Loop
+			}
+
+			for rune(data[nextCursor]) != '\n' {
+				nextCursor++
+
+				if nextCursor >= len(data) {
+					break Loop
+				}
+			}
+
+			digits := string(data[cursor:nextCursor])
+
+			if digits == "shutdown" {
+				fmt.Println("**** SHUTDOWN RECEIVED ****")
+				os.Exit(0)
+			}
+
+			if len(digits) != 10 {
+				connection.Close()
+				return
+			}
+
 			mapLock.Lock()
-			length = len(Values[value])
-			if length == 0 {
-				if value == "" {
-					mapLock.Unlock()
-					continue
-				}
+			instances := len(Values[digits])
 
-				if value == "shutdown" {
-					fmt.Println("**** SHUTDOWN ****")
-					cont = false
-				}
-
+			if instances == 0 {
 				count++
 
 				fileLock.Lock()
-				_, err := logFile.WriteString(value + "\n")
+				_, err := logFile.WriteString(digits + "\n")
 				fileLock.Unlock()
 
 				if err != nil {
@@ -93,7 +78,9 @@ func handleConnection(logFile *os.File, connection net.Conn) {
 				}
 			}
 
-			Values[value] = append(Values[value], value)
+			Values[digits] = append(Values[digits], digits)
+
+			cursor = nextCursor + 1
 			mapLock.Unlock()
 		}
 	}
@@ -122,6 +109,7 @@ func printLoop() {
 func logIncrementer() {
 	for {
 		time.Sleep(10 * time.Second)
+		fileLock.Lock()
 		logFileNumber++
 		os.Create("data." + strconv.Itoa(logFileNumber) + ".log")
 
@@ -131,11 +119,27 @@ func logIncrementer() {
 		if err != nil {
 			panic(err)
 		}
+
+		fileLock.Unlock()
 	}
 }
 
 var startTime time.Time
 var logFile *os.File
+
+func waitForConnection(wg *sync.WaitGroup, server net.Listener) {
+	for {
+		listenLock.Lock()
+		connection, err := server.Accept()
+		listenLock.Unlock()
+
+		if err != nil {
+			panic(err)
+		}
+
+		handleConnection(logFile, connection)
+	}
+}
 
 func main() {
 	matches, err := filepath.Glob("data.*.log")
@@ -165,14 +169,12 @@ func main() {
 		panic(err)
 	}
 
-	defer logFile.Close()
+	var wg sync.WaitGroup
 
-	for cont {
-		connection, err := server.Accept()
-		if err != nil {
-			panic(err)
-		}
-
-		go handleConnection(logFile, connection)
+	for i := 0; i < 7; i++ {
+		wg.Add(1)
+		go waitForConnection(&wg, server)
 	}
+
+	wg.Wait()
 }

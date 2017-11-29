@@ -29,7 +29,7 @@ func testTCPConnection(t *testing.T, message string, expected string) {
 		if _, err := conn.Write([]byte(message)); err == nil {
 			conn.Close()
 
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(1000 * time.Millisecond)
 
 			if data, err := ioutil.ReadFile("data.0.log"); err == nil {
 				if expected != "" {
@@ -68,5 +68,5 @@ func TestMultipleLoggingEvents(t *testing.T) {
 
 func TestUniqueEntriesAreCounted(t *testing.T) {
 	reset()
-	testTCPConnection(t, "0100000000\n0100000000\n0100000001", "0100000000\n0100000001\n")
+	testTCPConnection(t, "0100000000\n0100000000\n0100000001\n", "0100000000\n0100000001\n")
 }
