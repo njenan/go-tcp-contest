@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -95,6 +96,16 @@ var startTime time.Time
 var logFile *os.File
 
 func main() {
+	matches, err := filepath.Glob("data.*.log")
+
+	for _, match := range matches {
+		err = os.Remove(match)
+
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	startTime = time.Now()
 	server, err := net.Listen("tcp", ":3280")
 

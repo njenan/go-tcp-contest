@@ -39,7 +39,6 @@ func testTCPConnection(t *testing.T, message string, expected string) {
 				if message != string(data) {
 					t.Errorf("log did not match what was sent, expected '%v' but was actually '%v'", message, string(data))
 				}
-
 			} else {
 				panic(err)
 			}
