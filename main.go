@@ -171,7 +171,7 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	for i := 0; i < 7; i++ {
+	for i := 0; i < 6; i++ {
 		wg.Add(1)
 		go waitForConnection(&wg, server)
 	}
