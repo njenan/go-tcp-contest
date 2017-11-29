@@ -10,6 +10,10 @@ import (
 
 func TestSetUp(t *testing.T) {
 	go main()
+
+	if _, err := os.Create("data.0.log"); err != nil {
+		panic(err)
+	}
 }
 
 func reset() {
