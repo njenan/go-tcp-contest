@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -17,21 +16,27 @@ var Values = make(map[string][]string)
 var count = 0
 var logFileNumber = 0
 
-var mapLock sync.Mutex
+var mapLock sync.RWMutex
 var fileLock sync.Mutex
 
 var cont = true
 
-type TCPReader struct {
+var malformedError = errors.New("Malformed Data")
+
+type tcpReader struct {
 	data   []rune
 	cursor int
 }
 
-type TCPReadNext interface {
-	Next() ([]rune, error)
+type tcpReadNext interface {
+	Next() (string, error)
 }
 
-func (reader *TCPReader) Next() ([]rune, error) {
+func (reader *tcpReader) Next() (string, error) {
+	if reader.cursor >= len(reader.data) {
+		return "", nil
+	}
+
 	startingCursor := reader.cursor
 	next := reader.data[reader.cursor]
 
@@ -39,15 +44,17 @@ func (reader *TCPReader) Next() ([]rune, error) {
 		reader.cursor++
 
 		if reader.cursor >= len(reader.data) {
-			return nil, errors.New("Malformed data")
+			return "", malformedError
 		}
+
+		next = reader.data[reader.cursor]
 	}
 
-	return reader.data[startingCursor:reader.cursor], nil
+	return string(reader.data[startingCursor:reader.cursor]), nil
 }
 
-func NewTCPReader(data []byte) *TCPReader {
-	reader := new(TCPReader)
+func newTCPReader(data []byte) *tcpReader {
+	reader := new(tcpReader)
 	reader.cursor = 0
 	reader.data = bytes.Runes(data)
 	return reader
@@ -56,36 +63,41 @@ func NewTCPReader(data []byte) *TCPReader {
 func handleConnection(logFile *os.File, connection net.Conn) {
 	defer connection.Close()
 
-	data := make([]byte, 0, 4096)
+	//data := make([]byte, 0, 4096)
 	temp := make([]byte, 256)
 
 	for cont {
-		length, err := connection.Read(temp)
+		_, err := connection.Read(temp)
 
-		data = append(data, temp[:length]...)
 		if err != nil {
-			break
+			panic(err)
 		}
 
-		split := strings.Split(string(data), "\n")
-		for _, value := range split {
-			mapLock.Lock()
-			length = len(Values[value])
+		reader := newTCPReader(temp)
+
+		fmt.Println("Trying to get next entry")
+		for {
+			entry, err := reader.Next()
+
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
+
+			if entry == "" {
+				break
+			}
+
+			fmt.Printf("Entry %v is %v\n", count, entry)
+
+			mapLock.RLock()
+			length := len(Values[entry])
+
 			if length == 0 {
-				if value == "" {
-					mapLock.Unlock()
-					continue
-				}
-
-				if value == "shutdown" {
-					fmt.Println("**** SHUTDOWN ****")
-					cont = false
-				}
-
 				count++
 
 				fileLock.Lock()
-				_, err := logFile.WriteString(value + "\n")
+				_, err := logFile.WriteString(entry + "\n")
 				fileLock.Unlock()
 
 				if err != nil {
@@ -93,9 +105,50 @@ func handleConnection(logFile *os.File, connection net.Conn) {
 				}
 			}
 
-			Values[value] = append(Values[value], value)
+			mapLock.Lock()
+			Values[entry] = append(Values[entry], entry)
 			mapLock.Unlock()
+			mapLock.RUnlock()
 		}
+
+		/*
+
+			data = append(data, temp[:length]...)
+			if err != nil {
+				break
+			}
+
+			split := strings.Split(string(data), "\n")
+			for _, value := range split {
+				mapLock.Lock()
+				length = len(Values[value])
+				if length == 0 {
+					if value == "" {
+						mapLock.Unlock()
+						continue
+					}
+
+					if value == "shutdown" {
+						fmt.Println("**** SHUTDOWN ****")
+						cont = false
+					}
+
+					count++
+
+					fileLock.Lock()
+					_, err := logFile.WriteString(value + "\n")
+					fileLock.Unlock()
+
+					if err != nil {
+						panic(err)
+					}
+				}
+
+				Values[value] = append(Values[value], value)
+				mapLock.Unlock()
+			}
+
+		*/
 	}
 }
 
